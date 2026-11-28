@@ -796,12 +796,15 @@ function answerHTML(t,b){
   html+=list.map(([text,sides])=>`<li>${text}${math(lines(sides))}</li>`).join('');
   if(s.F&&!t.improper){
     html+=`<li>Vậy một nguyên hàm theo $x$ là:${math(`F(x)=${s.F}`)}</li>`;
-    if(!hide){const A=s.G(v.q),B=s.G(v.p);
-      html+=`<li>Thay cận theo công thức Newton–Leibniz:${math(`\begin{aligned}I&=F\left(${hi}\right)-F\left(${lo}\right)\\\\&\approx ${n6(A)}-${B<0?`\left(${n6(B)}\right)`:n6(B)}\\\\&\approx ${n6(value)}\end{aligned}`)}</li>`}
+    if(!hide){
+      const A=s.G(v.q),B=s.G(v.p);
+      const nB=B<0?`\\left(${n6(B)}\\right)`:n6(B);
+      html+=`<li>Thay cận theo công thức Newton–Leibniz:${math(`I=F\\left(${hi}\\right)-F\\left(${lo}\\right)\\approx ${n6(A)}-${nB}\\approx ${n6(value)}`)}</li>`;
+    }
   }
   html+='</ol>';
   if(value===Infinity)html+='<p>Tích phân <b>phân kỳ</b>.</p>';
-  else if(t.improper)html+=`<p>${t.ask?'Tích phân <b>hội tụ</b>.':'Đáp số:'}</p>`+math(`I\approx ${n6(value)}`);
+  else if(t.improper)html+=`<p>${t.ask?'Tích phân <b>hội tụ</b>.':'Đáp số:'}</p>`+math(`I\\approx ${n6(value)}`);
   else if(hide)html+=`<p>Đáp số: họ nguyên hàm</p>`+math(`I=${s.F}+C`);
   return html;
 }
