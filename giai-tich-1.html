@@ -34,6 +34,9 @@ background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradien
 .qh{font:600 14px var(--head);color:var(--accent)}
 .math{overflow-x:auto;overflow-y:hidden;padding:8px 0}
 .q button{font-size:13px}
+.row{gap:10px}
+.q[data-done]{content-visibility:auto;contain-intrinsic-size:auto 160px}
+@media(max-width:760px){.row button{padding:10px 14px}.q{margin:10px;padding:12px 14px}}
 .panel{border-top:1px dashed var(--line);margin-top:10px;padding-top:8px}
 .params{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
 .err{color:var(--bad)}
@@ -64,7 +67,7 @@ h2{font:700 18px var(--head);margin:0}
 <div class="grid">
 <aside>
   <button class="main" id="gen">Tạo đề</button>
-  <label class="field">Số câu <input type="number" id="count" min="1" max="50" value="50" autocomplete="off"></label>
+  <label class="field">Số câu <input type="number" id="count" min="1" max="50" value="40" autocomplete="off"></label>
   <label class="field">Mã đề<input type="text" id="seed" inputmode="numeric" autocomplete="off"></label>
   <div class="row"><button id="all">Hiện đáp án</button></div>
   <div class="row" style="margin:12px 0 4px"></div>
@@ -80,7 +83,7 @@ h2{font:700 18px var(--head);margin:0}
 <div id="types"></div>
 </dialog>
 <script>window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']]},svg:{fontCache:'local'},startup:{typeset:false}};</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
 <script id="logic">
 /* ===== Đọc số: 3, -1/2, pi/3, sqrt(3), 2*pi ===== */
 function num(str){
@@ -754,94 +757,159 @@ function plain(x){const f=frac(x);return f?(f[1]===1?''+f[0]:f[0]+'/'+f[1]):''+x
 const $=id=>document.getElementById(id);
 let items=[];
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function typeset(el){const M=window.MathJax;if(M&&M.startup&&M.startup.promise)M.startup.promise.then(()=>M.typesetPromise([el]));}
+const n6=x=>+x.toFixed(6);
 
-const groups={};TYPES.forEach(t=>(groups[t.group]=groups[t.group]||[]).push(t));
-$('types').innerHTML=Object.entries(groups).map(([g,l])=>`<fieldset><legend><label class="chk"><input type="checkbox" class="part" checked> <span>${g}</span></label></legend><div class="opts">${l.map(t=>`<label><input type="checkbox" id="t_${t.id}" value="${t.id}" checked aria-label="${t.name}"> <span>$\\displaystyle ${SHOW[t.id]}$</span></label>`).join('')}</div></fieldset>`).join('');
-let drawn=false;
-const countLabel=()=>$('setup').textContent=`Cài đặt (${boxes().filter(x=>x.checked).length}/${TYPES.length} dạng)`;
-$('setup').onclick=()=>{$('box').showModal();if(!drawn){drawn=true;typeset($('types'))}};
-$('done').onclick=()=>$('box').close();
-$('tools').onchange=()=>{items.forEach(x=>x.edit=false);if(items.length)renderAll()};
-$('nobounds').onchange=()=>{hideBounds=$('nobounds').checked;if(items.length)renderAll()};
-$('box').addEventListener('click',e=>{if(e.target===$('box'))$('box').close()});
-const boxes=()=>[...document.querySelectorAll('#types input[value]:not(.part)')].filter(x=>x.value!=='on');
-$('types').addEventListener('change',e=>{const f=e.target.closest('fieldset'),part=f.querySelector('.part'),own=boxes().filter(x=>f.contains(x));
-  if(e.target===part)own.forEach(x=>x.checked=part.checked);else sync(f);});
-function sync(f){const part=f.querySelector('.part'),own=boxes().filter(x=>f.contains(x)),n=own.filter(x=>x.checked).length;part.checked=n===own.length;part.indeterminate=n>0&&n<own.length}
+/* ===== Cài đặt được giữ lại sau khi tải lại trang ===== */
+const KEY='tpgt1.settings';
+const settings=Object.assign({count:40,seed:'',tools:false,nobounds:false,off:[]},(()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return{}}})());
+let saveTimer=0;
+function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(settings))}catch(e){}},300)}
 
+/* ===== MathJax: chỉ nạp khi cần và gom mọi lời gọi typeset vào một lượt ===== */
+let mj=null,mjQueue=[],mjTimer=0,tryLoad=false;
+const mjLive=()=>window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise&&window.MathJax.typesetPromise;
+function loadMathJax(){
+  if(mjLive())return ready();
+  if(tryLoad)return;tryLoad=true;
+  // thẻ script defer trong <head> đang tải; chờ đến khi MathJax thực sự sẵn sàng
+  let n=0;const t=setInterval(()=>{
+    if(mjLive()){clearInterval(t);ready()}
+    else if(++n>400)clearInterval(t)},50);
+}
+function ready(){mj=window.MathJax;const p=mj.startup&&mj.startup.promise;if(!p)return flush();p.then(()=>flush()).catch(()=>{})}
+function flush(){clearTimeout(mjTimer);mjTimer=0;if(!mjLive())return;
+  const set=[...new Set(mjQueue)];mjQueue=[];
+  if(set.length)mj.typesetPromise(set).catch(()=>{});}
+function typeset(el){
+  mjQueue.push(el);
+  if(mjQueue.length>80)mjQueue=mjQueue.slice(-80); // mất MathJax cũng không giữ mãi DOM cũ
+  if(!mjLive())loadMathJax();
+  clearTimeout(mjTimer);mjTimer=setTimeout(flush,80)}
+
+/* ===== Lời giải: chỉ dựng khi bấm Đáp án ===== */
 function answerHTML(t,b){
   const{s,value,lo,hi,v,hide}=b,list=STEPS[t.id](v);
-  const math=x=>`<div class="math">$$${x}$$</div>`,n=x=>+x.toFixed(6);
-  list.unshift(null);
+  const math=x=>`<div class="math">$$${x}$$</div>`;
   let html=`<p class="idea"><b>Hướng làm.</b> ${s.note}</p><ol class="steps">`;
-  html+=list.slice(1).map(([text,sides])=>`<li>${text}${math(lines(sides))}</li>`).join('');
+  html+=list.map(([text,sides])=>`<li>${text}${math(lines(sides))}</li>`).join('');
   if(s.F&&!t.improper){
     html+=`<li>Vậy một nguyên hàm theo $x$ là:${math(`F(x)=${s.F}`)}</li>`;
-    const A=s.G(v.q),B=s.G(v.p);
-    if(!hide)html+=`<li>Thay cận theo công thức Newton–Leibniz:${math(`\\begin{aligned}I&=F\\left(${hi}\\right)-F\\left(${lo}\\right)\\\\&\\approx ${n(A)}-${B<0?`\\left(${n(B)}\\right)`:n(B)}\\\\&\\approx ${n(value)}\\end{aligned}`)}</li>`;
+    if(!hide){const A=s.G(v.q),B=s.G(v.p);
+      html+=`<li>Thay cận theo công thức Newton–Leibniz:${math(`\begin{aligned}I&=F\left(${hi}\right)-F\left(${lo}\right)\\\\&\approx ${n6(A)}-${B<0?`\left(${n6(B)}\right)`:n6(B)}\\\\&\approx ${n6(value)}\end{aligned}`)}</li>`}
   }
   html+='</ol>';
   if(value===Infinity)html+='<p>Tích phân <b>phân kỳ</b>.</p>';
-  else if(t.improper)html+=`<p>${t.ask?'Tích phân <b>hội tụ</b>.':'Đáp số:'}</p>`+math(`I\\approx ${n(value)}`);
+  else if(t.improper)html+=`<p>${t.ask?'Tích phân <b>hội tụ</b>.':'Đáp số:'}</p>`+math(`I\approx ${n6(value)}`);
   else if(hide)html+=`<p>Đáp số: họ nguyên hàm</p>`+math(`I=${s.F}+C`);
   return html;
 }
+
+/* ===== Vẽ từng câu ===== */
 function render(i){
-  const it=items[i],el=$('q'+i),t=it.t;
-  let b,err='';try{b=build(t,it.raw);it.good=b}catch(e){err=e.message;b=it.good}
+  const it=items[i],el=$('q'+i);if(!el)return;
+  const t=it.t;
+  let b,err='';
+  // dùng lại kết quả đã dựng nếu bộ số và chế độ ẩn cận chưa đổi
+  if(it.cache&&it.cache.raw===it.raw&&it.cache.hide===hideBounds)b=it.cache.b;
+  else try{b=build(t,it.raw);it.cache={raw:it.raw,b,hide:hideBounds}}catch(e){err=e.message;b=it.cache&&it.cache.b}
+  const tools=$('tools').checked;
   el.innerHTML=`<div class="qh">Câu ${i+1}</div>
   <div class="math">${t.ask?'Xét sự hội tụ và tính (nếu hội tụ):':b.hide?'Tính nguyên hàm:':'Tính:'} $$${b.q}$$</div>
-  <div class="row"><button data-a="ans">${it.ans?'Ẩn đáp án':'Đáp án'}</button>${$('tools').checked?'<button data-a="new">Đổi số</button><button data-a="edit">Sửa số</button>':''}</div>
-  ${it.edit&&$('tools').checked?`<form class="panel"><div class="params">${t.keys.map(k=>{const c=(t.choices||{})[k];return`<label>${c?'Chọn hàm':k}${c?`<select id="i${i}_${k}" name="${k}">${c.map((o,j)=>`<option value="${j}"${+it.raw[k]===j?' selected':''}>${o}</option>`).join('')}</select>`:`<input type="text" id="i${i}_${k}" name="${k}" value="${esc(it.raw[k])}">`}</label>`}).join('')}</div>
+  <div class="row"><button data-a="ans">${it.ans?'Ẩn đáp án':'Đáp án'}</button>${tools?'<button data-a="new">Đổi số</button><button data-a="edit">Sửa số</button>':''}</div>
+  ${it.edit&&tools?`<form class="panel"><div class="params">${t.keys.map(k=>{const c=(t.choices||{})[k];return`<label>${c?'Chọn hàm':k}${c?`<select id="i${i}_${k}" name="${k}">${c.map((o,j)=>`<option value="${j}"${+it.raw[k]===j?' selected':''}>${o}</option>`).join('')}</select>`:`<input type="text" id="i${i}_${k}" name="${k}" value="${esc(it.raw[k])}">`}</label>`}).join('')}</div>
   <p class="hint">Nhập được số nguyên, phân số, pi/3, sqrt(2), e^2, ln(3).</p><button type="submit">Cập nhật đề</button>${err?`<p class="err" role="alert">${esc(err)} Đề phía trên vẫn là bộ số hợp lệ trước đó.</p>`:''}</form>`:''}
   ${it.ans&&!err?`<div class="panel">${answerHTML(t,b)}</div>`:''}`;
+  el.dataset.done=1;                       // cho content-visibility bỏ vẽ câu ngoài màn hình
   typeset(el);
 }
-function renderAll(){
+function renderShell(){
   $('sheet').innerHTML=items.map((_,i)=>`<section class="q" id="q${i}"></section>`).join('');
-  items.forEach((_,i)=>render(i));
   $('all').textContent=items.length&&items.every(x=>x.ans)?'Ẩn đáp án':'Hiện đáp án';
 }
+// vẽ theo lô để không chặn cuộn trên điện thoại
+function paint(from=0,to=items.length){let i=from;const step=()=>{const e=Math.min(to,i+4);while(i<e)render(i++);if(i<to)setTimeout(step,0)};step()}
+function renderAll(){renderShell();paint()}
+
+/* ===== Sinh đề theo mã ===== */
+function chosenTypes(){const on=new Set(settings.off);return TYPES.filter(t=>!on.has(t.id))}
 function generate(seed){
-  const chosen=boxes().filter(x=>x.checked).map(x=>TYPES.find(t=>t.id===x.value));
+  const chosen=chosenTypes();
   if(!chosen.length){items=[];$('sheet').innerHTML='<p class="q">Hãy chọn ít nhất một dạng ở cột bên rồi bấm Tạo đề.</p>';return}
-  const n=Math.max(1,Math.min(50,parseInt($('count').value,10)||50));$('count').value=n;
+  const n=Math.max(1,Math.min(50,parseInt($('count').value,10)||40));$('count').value=n;settings.count=n;
   rand=seeded(seed);
   let bag=[];items=[];
   for(let i=0;i<n;i++){
     if(!bag.length){bag=[...chosen];for(let j=bag.length-1;j>0;j--){const k=Math.floor(rand()*(j+1));[bag[j],bag[k]]=[bag[k],bag[j]]}}
     const t=bag.pop();items.push({t,raw:make(t)});
   }
-  rand=Math.random;renderAll();
+  rand=Math.random;
+  renderShell();                           // khung đề hiện ngay, không chờ MathJax
+  paint(0,Math.min(items.length,6));       // 6 câu đầu trước, phần còn lại ở lượt sau
+  setTimeout(()=>paint(6),0);
 }
 const fresh=()=>1000+Math.floor(Math.random()*900000);
 let last='';
 $('gen').onclick=()=>{
   let code=parseInt($('seed').value,10);
   if(Number.isNaN(code))code=fresh();
-  $('seed').value=code;
+  $('seed').value=code;settings.seed=code;save();
   // cùng mã, số câu và dạng như lần trước thì giữ nguyên đề đang làm
-  const key=[code,$('count').value,boxes().filter(x=>x.checked).map(x=>x.value)].join('|');
+  const key=[code,$('count').value,chosenTypes().map(t=>t.id).join(',')].join('|');
   if(key===last)return;
   last=key;generate(code);
 };
-$('all').onclick=()=>{const on=!items.every(x=>x.ans);items.forEach(x=>x.ans=on);renderAll()};
-const allPicked=()=>boxes().every(x=>x.checked);
+
+/* ===== Hộp Cài đặt ===== */
+const groups={};TYPES.forEach(t=>(groups[t.group]=groups[t.group]||[]).push(t));
+const offSet=new Set(settings.off);
+$('types').innerHTML=Object.entries(groups).map(([g,l])=>`<fieldset><legend><label class="chk"><input type="checkbox" class="part"> <span>${g}</span></label></legend><div class="opts">${l.map(t=>`<label><input type="checkbox" value="${t.id}"${offSet.has(t.id)?'':' checked'} aria-label="${t.name}"> <span>$\\displaystyle ${SHOW[t.id]}$</span></label>`).join('')}</div></fieldset>`).join('');
+let drawn=false;
+const countLabel=()=>$('setup').textContent=`Cài đặt (${TYPES.length-offSet.size}/${TYPES.length} dạng)`;
+$('setup').onclick=()=>{$('box').showModal();if(!drawn){drawn=true;typeset($('types'))}};
+$('done').onclick=()=>$('box').close();
+$('tools').onchange=()=>{settings.tools=$('tools').checked;save();items.forEach(x=>x.edit=false);if(items.length)renderAll()};
+$('nobounds').onchange=()=>{hideBounds=$('nobounds').checked;settings.nobounds=hideBounds;save();if(items.length)renderAll()};
+$('count').onchange=()=>{settings.count=Math.max(1,Math.min(50,parseInt($('count').value,10)||40));$('count').value=settings.count;save()};
+$('box').addEventListener('click',e=>{if(e.target===$('box'))$('box').close()});
+const boxes=()=>[...document.querySelectorAll('#types input[value]')];
+$('types').addEventListener('change',e=>{
+  const f=e.target.closest('fieldset'),part=f.querySelector('.part'),own=[...f.querySelectorAll('input[value]')];
+  if(e.target===part)own.forEach(x=>x.checked=part.checked);else sync(f);
+  own.forEach(x=>{if(x.checked)offSet.delete(x.value);else offSet.add(x.value)});
+  settings.off=[...offSet];save();pickLabel();
+});
+function sync(f){const part=f.querySelector('.part'),own=[...f.querySelectorAll('input[value]')],n=own.filter(x=>x.checked).length;part.checked=n===own.length;part.indeterminate=n>0&&n<own.length}
+const allPicked=()=>offSet.size===0;
 const pickLabel=()=>{$('pick').textContent=allPicked()?'Bỏ hết':'Chọn hết';countLabel()};
-$('pick').onclick=()=>{const on=!allPicked();boxes().forEach(x=>x.checked=on);document.querySelectorAll('#types fieldset').forEach(sync);pickLabel()};
-$('types').addEventListener('change',pickLabel);
+$('pick').onclick=()=>{
+  const on=!allPicked();
+  boxes().forEach(x=>x.checked=on);
+  document.querySelectorAll('#types fieldset').forEach(sync);
+  offSet.clear();if(!on)TYPES.forEach(t=>offSet.add(t.id));
+  settings.off=[...offSet];save();pickLabel();
+};
+
+/* ===== Thao tác trên đề ===== */
+$('all').onclick=()=>{const on=!items.every(x=>x.ans);items.forEach(x=>x.ans=on);renderAll()};
 $('sheet').addEventListener('click',e=>{
   const a=e.target.dataset&&e.target.dataset.a;if(!a)return;
   const i=+e.target.closest('.q').id.slice(1),it=items[i];
-  if(a==='ans')it.ans=!it.ans;if(a==='edit')it.edit=!it.edit;if(a==='new')it.raw=make(it.t);
+  if(a==='ans')it.ans=!it.ans;if(a==='edit')it.edit=!it.edit;if(a==='new')it.raw=make(it.t)
   render(i);
 });
 $('sheet').addEventListener('submit',e=>{
   e.preventDefault();const i=+e.target.closest('.q').id.slice(1);
   items[i].raw=Object.fromEntries(new FormData(e.target));render(i);
 });
-countLabel();
-$('gen').onclick(); // mở trang là có mã và đề của mã đó
+
+/* ===== Khôi phục cài đặt rồi mở đề ===== */
+$('count').value=settings.count;
+$('tools').checked=!!settings.tools;
+$('nobounds').checked=!!settings.nobounds;hideBounds=!!settings.nobounds;
+document.querySelectorAll('#types fieldset').forEach(sync);
+pickLabel();
+let code=parseInt(settings.seed,10);
+$('seed').value=Number.isNaN(code)?'':code;
+$('gen').onclick();
 })();
-</script>
+</script></script></script>
