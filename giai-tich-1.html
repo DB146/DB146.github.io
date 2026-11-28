@@ -78,11 +78,11 @@ h2{font:700 18px var(--head);margin:0}
 </div>
 <dialog id="box" aria-labelledby="boxTitle">
 <div class="boxhead"><h2 id="boxTitle">Cài đặt</h2><div class="row"><button id="pick">Bỏ hết</button><button id="done">Xong</button></div></div>
-<label class="chk tools"><input type="checkbox" id="tools" autocomplete="off"> <span>Hiện nút “Đổi số” và “Sửa số” ở mỗi câu</span></label>
-<label class="chk tools"><input type="checkbox" id="nobounds" autocomplete="off"> <span>Ẩn cận: chỉ tính tích phân (bỏ cận ở đề), lời giải dừng ở nguyên hàm — không áp dụng cho tích phân suy rộng</span></label>
+<label class="chk tools"><input type="checkbox" id="nobounds" autocomplete="off"> <span>Tích phân bất định</span></label>
 <div id="types"></div>
 </dialog>
-<script>window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']]},svg:{fontCache:'local'},startup:{typeset:false}};</script>
+<script>window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']]},svg:{fontCache:'local'},startup:{typeset:false,ready(){MathJax.startup.defaultReady();MathJax.startup.document.inputJax.forEach(j=>j.preFilters.add(()=>doc=>{for(const n of doc.math)n.setProperties({dataMj:1})}))}}};</script>
+<style>.math{opacity:0;transition:opacity .18s ease}.math.mj{opacity:1}@media(prefers-reduced-motion:reduce){.math{transition:none}}</style>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
 <script id="logic">
 /* ===== Đọc số: 3, -1/2, pi/3, sqrt(3), 2*pi ===== */
@@ -756,12 +756,11 @@ function plain(x){const f=frac(x);return f?(f[1]===1?''+f[0]:f[0]+'/'+f[1]):''+x
 (function(){
 const $=id=>document.getElementById(id);
 let items=[];
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const n6=x=>+x.toFixed(6);
 
 /* ===== Cài đặt được giữ lại sau khi tải lại trang ===== */
 const KEY='tpgt1.settings';
-const settings=Object.assign({count:40,seed:'',tools:false,nobounds:false,off:[]},(()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return{}}})());
+const settings=Object.assign({count:40,seed:'',nobounds:false,off:[]},(()=>{try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return{}}})());
 let saveTimer=0;
 function save(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(settings))}catch(e){}},300)}
 
@@ -774,16 +773,19 @@ function loadMathJax(){
   // thẻ script defer trong <head> đang tải; chờ đến khi MathJax thực sự sẵn sàng
   let n=0;const t=setInterval(()=>{
     if(mjLive()){clearInterval(t);ready()}
-    else if(++n>400)clearInterval(t)},50);
+    else if(++n>120){clearInterval(t);show(mjQueue)}   // MathJax lỗi/không tải được: hiện chữ thường
+  },50);
 }
 function ready(){mj=window.MathJax;const p=mj.startup&&mj.startup.promise;if(!p)return flush();p.then(()=>flush()).catch(()=>{})}
 function flush(){clearTimeout(mjTimer);mjTimer=0;if(!mjLive())return;
   const set=[...new Set(mjQueue)];mjQueue=[];
-  if(set.length)mj.typesetPromise(set).catch(()=>{});}
+  if(set.length)return mj.typesetPromise(set).then(()=>show(set),()=>show(set));}
+// chỉ hiện công thức sau khi MathJax vẽ xong, tránh nháy mã LaTeX thô
+function show(els){for(const el of els||[])if(el.querySelectorAll)el.querySelectorAll('.math:not(.mj)').forEach(m=>m.classList.add('mj'))}
 function typeset(el){
   mjQueue.push(el);
   if(mjQueue.length>80)mjQueue=mjQueue.slice(-80); // mất MathJax cũng không giữ mãi DOM cũ
-  if(!mjLive())loadMathJax();
+  if(!mjLive())loadMathJax();else if(!mj)ready();
   clearTimeout(mjTimer);mjTimer=setTimeout(flush,80)}
 
 /* ===== Lời giải: chỉ dựng khi bấm Đáp án ===== */
@@ -808,18 +810,14 @@ function answerHTML(t,b){
 function render(i){
   const it=items[i],el=$('q'+i);if(!el)return;
   const t=it.t;
-  let b,err='';
-  // dùng lại kết quả đã dựng nếu bộ số và chế độ ẩn cận chưa đổi
-  if(it.cache&&it.cache.raw===it.raw&&it.cache.hide===hideBounds)b=it.cache.b;
-  else try{b=build(t,it.raw);it.cache={raw:it.raw,b,hide:hideBounds}}catch(e){err=e.message;b=it.cache&&it.cache.b}
-  const tools=$('tools').checked;
+  // dùng lại kết quả đã dựng nếu chế độ bất định chưa đổi
+  const b=it.cache&&it.cache.hide===hideBounds?it.cache.b:(it.cache={hide:hideBounds,b:build(t,it.raw)}).b;
   el.innerHTML=`<div class="qh">Câu ${i+1}</div>
-  <div class="math">${t.ask?'Xét sự hội tụ và tính (nếu hội tụ):':b.hide?'Tính nguyên hàm:':'Tính:'} $$${b.q}$$</div>
-  <div class="row"><button data-a="ans">${it.ans?'Ẩn đáp án':'Đáp án'}</button>${tools?'<button data-a="new">Đổi số</button><button data-a="edit">Sửa số</button>':''}</div>
-  ${it.edit&&tools?`<form class="panel"><div class="params">${t.keys.map(k=>{const c=(t.choices||{})[k];return`<label>${c?'Chọn hàm':k}${c?`<select id="i${i}_${k}" name="${k}">${c.map((o,j)=>`<option value="${j}"${+it.raw[k]===j?' selected':''}>${o}</option>`).join('')}</select>`:`<input type="text" id="i${i}_${k}" name="${k}" value="${esc(it.raw[k])}">`}</label>`}).join('')}</div>
-  <p class="hint">Nhập được số nguyên, phân số, pi/3, sqrt(2), e^2, ln(3).</p><button type="submit">Cập nhật đề</button>${err?`<p class="err" role="alert">${esc(err)} Đề phía trên vẫn là bộ số hợp lệ trước đó.</p>`:''}</form>`:''}
-  ${it.ans&&!err?`<div class="panel">${answerHTML(t,b)}</div>`:''}`;
+  <div class="math">${t.ask?'Xét sự hội tụ và tính (nếu hội tụ):':b.hide?'Tích phân bất định:':'Tính:'} $$${b.q}$$</div>
+  <div class="row"><button data-a="ans">${it.ans?'Ẩn đáp án':'Đáp án'}</button></div>
+  ${it.ans?`<div class="panel">${answerHTML(t,b)}</div>`:''}`;
   el.dataset.done=1;                       // cho content-visibility bỏ vẽ câu ngoài màn hình
+  el.classList.remove('mj');               // ẩn công thức cho tới khi MathJax vẽ xong
   typeset(el);
 }
 function renderShell(){
@@ -864,10 +862,9 @@ const groups={};TYPES.forEach(t=>(groups[t.group]=groups[t.group]||[]).push(t));
 const offSet=new Set(settings.off);
 $('types').innerHTML=Object.entries(groups).map(([g,l])=>`<fieldset><legend><label class="chk"><input type="checkbox" class="part"> <span>${g}</span></label></legend><div class="opts">${l.map(t=>`<label><input type="checkbox" value="${t.id}"${offSet.has(t.id)?'':' checked'} aria-label="${t.name}"> <span>$\\displaystyle ${SHOW[t.id]}$</span></label>`).join('')}</div></fieldset>`).join('');
 let drawn=false;
-const countLabel=()=>$('setup').textContent=`Cài đặt (${TYPES.length-offSet.size}/${TYPES.length} dạng)`;
+const pickLabel=()=>{$('pick').textContent=offSet.size?'Chọn hết':'Bỏ hết'};
 $('setup').onclick=()=>{$('box').showModal();if(!drawn){drawn=true;typeset($('types'))}};
 $('done').onclick=()=>$('box').close();
-$('tools').onchange=()=>{settings.tools=$('tools').checked;save();items.forEach(x=>x.edit=false);if(items.length)renderAll()};
 $('nobounds').onchange=()=>{hideBounds=$('nobounds').checked;settings.nobounds=hideBounds;save();if(items.length)renderAll()};
 $('count').onchange=()=>{settings.count=Math.max(1,Math.min(50,parseInt($('count').value,10)||40));$('count').value=settings.count;save()};
 $('box').addEventListener('click',e=>{if(e.target===$('box'))$('box').close()});
@@ -879,10 +876,8 @@ $('types').addEventListener('change',e=>{
   settings.off=[...offSet];save();pickLabel();
 });
 function sync(f){const part=f.querySelector('.part'),own=[...f.querySelectorAll('input[value]')],n=own.filter(x=>x.checked).length;part.checked=n===own.length;part.indeterminate=n>0&&n<own.length}
-const allPicked=()=>offSet.size===0;
-const pickLabel=()=>{$('pick').textContent=allPicked()?'Bỏ hết':'Chọn hết';countLabel()};
 $('pick').onclick=()=>{
-  const on=!allPicked();
+  const on=offSet.size>0;
   boxes().forEach(x=>x.checked=on);
   document.querySelectorAll('#types fieldset').forEach(sync);
   offSet.clear();if(!on)TYPES.forEach(t=>offSet.add(t.id));
@@ -893,18 +888,12 @@ $('pick').onclick=()=>{
 $('all').onclick=()=>{const on=!items.every(x=>x.ans);items.forEach(x=>x.ans=on);renderAll()};
 $('sheet').addEventListener('click',e=>{
   const a=e.target.dataset&&e.target.dataset.a;if(!a)return;
-  const i=+e.target.closest('.q').id.slice(1),it=items[i];
-  if(a==='ans')it.ans=!it.ans;if(a==='edit')it.edit=!it.edit;if(a==='new')it.raw=make(it.t)
+  const i=+e.target.closest('.q').id.slice(1);items[i].ans=!items[i].ans;
   render(i);
-});
-$('sheet').addEventListener('submit',e=>{
-  e.preventDefault();const i=+e.target.closest('.q').id.slice(1);
-  items[i].raw=Object.fromEntries(new FormData(e.target));render(i);
 });
 
 /* ===== Khôi phục cài đặt rồi mở đề ===== */
 $('count').value=settings.count;
-$('tools').checked=!!settings.tools;
 $('nobounds').checked=!!settings.nobounds;hideBounds=!!settings.nobounds;
 document.querySelectorAll('#types fieldset').forEach(sync);
 pickLabel();
