@@ -76,6 +76,7 @@ h2{font:700 18px var(--head);margin:0}
 <dialog id="box" aria-labelledby="boxTitle">
 <div class="boxhead"><h2 id="boxTitle">Cài đặt</h2><div class="row"><button id="pick">Bỏ hết</button><button id="done">Xong</button></div></div>
 <label class="chk tools"><input type="checkbox" id="tools" autocomplete="off"> <span>Hiện nút “Đổi số” và “Sửa số” ở mỗi câu</span></label>
+<label class="chk tools"><input type="checkbox" id="nobounds" autocomplete="off"> <span>Ẩn cận: chỉ tính tích phân (bỏ cận ở đề), lời giải dừng ở nguyên hàm — không áp dụng cho tích phân suy rộng</span></label>
 <div id="types"></div>
 </dialog>
 <script>window.MathJax={tex:{inlineMath:[['$','$'],['\\(','\\)']]},svg:{fontCache:'local'},startup:{typeset:false}};</script>
@@ -132,6 +133,8 @@ const par=s=>/[+-]/.test(s.slice(1))||s[0]==='-'?`\\left(${s}\\right)`:s;
 const kx=k=>S([k,'x']);
 /* ===== Ngẫu nhiên có mã đề ===== */
 let rand=Math.random;
+let hideBounds=false;                       // chế độ ẩn cận (bật ở ô Cài đặt)
+const HIDE=()=>hideBounds;
 function seeded(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 const R=(lo,hi)=>lo+Math.floor(rand()*(hi-lo+1));
 const NZ=(lo,hi)=>{let v;do v=R(lo,hi);while(!v);return v};
@@ -672,7 +675,7 @@ tan_n({h,n}){const f=h?'cot':'tan',P=k=>k===1?`\\${f} x`:`\\${f}^{${k}}x`,out=[]
  return out},
 abc({a,b,c}){const A=c-b,den=S([A,'t^{2}'],[2*a,'t'],[b+c,'']),f=FR(2,den),D=a*a+b*b-c*c,u=S([A,'t'],[a,'']),map=x=>Math.tan(x/2);
  const out=[say('Đặt $t=\\tan\\frac x2$, khi đó:',[`\\sin x=${FR('2t','1+t^{2}')},\; \\cos x=${FR('1-t^{2}','1+t^{2}')},\; dx=${FR('2\\,dt','1+t^{2}')}`]),
- say('Thay vào và rút gọn $1+t^{2}$:',[`I=\\int{${f}}\\,dt\\quad(\\text{cận mới theo }t)`])];
+ say('Thay vào và rút gọn $1+t^{2}$:',[`I=\\int{${f}}\\,dt\\quad(\\text{theo biến mới }t)`])];
  if(Math.abs(A)<1e-12)out.push(intg('Mẫu là bậc nhất:',[It(f,'t'),S([1/a,lnabs(S([a,'t'],[c,'']))])],'t',map));
  else if(Math.abs(D)<1e-9)out.push(val('Mẫu là bình phương đúng:',[den,FR(`${W(u)}^{2}`,T(A))],'t',map),intg('Lấy nguyên hàm:',[It(f,'t'),S([-2,FR(1,u)])],'t',map));
  else{const r=Math.sqrt(Math.abs(D));
@@ -728,14 +731,16 @@ const lines=sides_=>{const sides=sides_.map(tidy);return sides.length===1?sides[
 function build(t,raw){
   const v={};for(const k of t.keys)v[k]=num(raw[k]);
   t.check(v);
+  // chế độ ẩn cận: đề không in cận nên chỉ còn yêu cầu tìm nguyên hàm
+  const hide=HIDE()&&!t.improper;
   const lo=t.lower?T(t.lower(v)):T(v.p), hi=t.upper?t.upper(v):T(v.q);
-  const q=`I=\\int_{${lo}}^{${hi}}${t.tex(v)}\\,dx`;
+  const q=hide?`I=\\int{${t.tex(v)}}\\,dx`:`I=\\int_{${lo}}^{${hi}}${t.tex(v)}\\,dx`;
   const s=t.solve(v);
   if(s.F)s.F=tidy(s.F);
   s.note=tidy(s.note);
   const value=t.improper?s.value:s.G(v.q)-s.G(v.p);
   need(!Number.isNaN(value),'Bộ số này làm biểu thức không xác định.');
-  return{v,q,s,value,lo,hi};
+  return{v,q,s,value,lo,hi,hide};
 }
 function make(t){
   for(let i=0;i<200;i++){const g=t.gen(),raw={};for(const k of t.keys)raw[k]=typeof g[k]==='string'?g[k]:plain(g[k]);
@@ -758,6 +763,7 @@ const countLabel=()=>$('setup').textContent=`Cài đặt (${boxes().filter(x=>x.
 $('setup').onclick=()=>{$('box').showModal();if(!drawn){drawn=true;typeset($('types'))}};
 $('done').onclick=()=>$('box').close();
 $('tools').onchange=()=>{items.forEach(x=>x.edit=false);if(items.length)renderAll()};
+$('nobounds').onchange=()=>{hideBounds=$('nobounds').checked;if(items.length)renderAll()};
 $('box').addEventListener('click',e=>{if(e.target===$('box'))$('box').close()});
 const boxes=()=>[...document.querySelectorAll('#types input[value]:not(.part)')].filter(x=>x.value!=='on');
 $('types').addEventListener('change',e=>{const f=e.target.closest('fieldset'),part=f.querySelector('.part'),own=boxes().filter(x=>f.contains(x));
@@ -765,7 +771,7 @@ $('types').addEventListener('change',e=>{const f=e.target.closest('fieldset'),pa
 function sync(f){const part=f.querySelector('.part'),own=boxes().filter(x=>f.contains(x)),n=own.filter(x=>x.checked).length;part.checked=n===own.length;part.indeterminate=n>0&&n<own.length}
 
 function answerHTML(t,b){
-  const{s,value,lo,hi,v}=b,list=STEPS[t.id](v);
+  const{s,value,lo,hi,v,hide}=b,list=STEPS[t.id](v);
   const math=x=>`<div class="math">$$${x}$$</div>`,n=x=>+x.toFixed(6);
   list.unshift(null);
   let html=`<p class="idea"><b>Hướng làm.</b> ${s.note}</p><ol class="steps">`;
@@ -773,18 +779,19 @@ function answerHTML(t,b){
   if(s.F&&!t.improper){
     html+=`<li>Vậy một nguyên hàm theo $x$ là:${math(`F(x)=${s.F}`)}</li>`;
     const A=s.G(v.q),B=s.G(v.p);
-    html+=`<li>Thay cận theo công thức Newton–Leibniz:${math(`\\begin{aligned}I&=F\\left(${hi}\\right)-F\\left(${lo}\\right)\\\\&\\approx ${n(A)}-${B<0?`\\left(${n(B)}\\right)`:n(B)}\\\\&\\approx ${n(value)}\\end{aligned}`)}</li>`;
+    if(!hide)html+=`<li>Thay cận theo công thức Newton–Leibniz:${math(`\\begin{aligned}I&=F\\left(${hi}\\right)-F\\left(${lo}\\right)\\\\&\\approx ${n(A)}-${B<0?`\\left(${n(B)}\\right)`:n(B)}\\\\&\\approx ${n(value)}\\end{aligned}`)}</li>`;
   }
   html+='</ol>';
   if(value===Infinity)html+='<p>Tích phân <b>phân kỳ</b>.</p>';
   else if(t.improper)html+=`<p>${t.ask?'Tích phân <b>hội tụ</b>.':'Đáp số:'}</p>`+math(`I\\approx ${n(value)}`);
+  else if(hide)html+=`<p>Đáp số: họ nguyên hàm</p>`+math(`I=${s.F}+C`);
   return html;
 }
 function render(i){
   const it=items[i],el=$('q'+i),t=it.t;
   let b,err='';try{b=build(t,it.raw);it.good=b}catch(e){err=e.message;b=it.good}
   el.innerHTML=`<div class="qh">Câu ${i+1}</div>
-  <div class="math">${t.ask?'Xét sự hội tụ và tính (nếu hội tụ):':'Tính:'} $$${b.q}$$</div>
+  <div class="math">${t.ask?'Xét sự hội tụ và tính (nếu hội tụ):':b.hide?'Tính nguyên hàm:':'Tính:'} $$${b.q}$$</div>
   <div class="row"><button data-a="ans">${it.ans?'Ẩn đáp án':'Đáp án'}</button>${$('tools').checked?'<button data-a="new">Đổi số</button><button data-a="edit">Sửa số</button>':''}</div>
   ${it.edit&&$('tools').checked?`<form class="panel"><div class="params">${t.keys.map(k=>{const c=(t.choices||{})[k];return`<label>${c?'Chọn hàm':k}${c?`<select id="i${i}_${k}" name="${k}">${c.map((o,j)=>`<option value="${j}"${+it.raw[k]===j?' selected':''}>${o}</option>`).join('')}</select>`:`<input type="text" id="i${i}_${k}" name="${k}" value="${esc(it.raw[k])}">`}</label>`}).join('')}</div>
   <p class="hint">Nhập được số nguyên, phân số, pi/3, sqrt(2), e^2, ln(3).</p><button type="submit">Cập nhật đề</button>${err?`<p class="err" role="alert">${esc(err)} Đề phía trên vẫn là bộ số hợp lệ trước đó.</p>`:''}</form>`:''}
